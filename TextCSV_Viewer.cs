@@ -30,6 +30,7 @@ See README.md for full details.
 using System;
 using System.Data;
 using System.IO;
+using System.Text;
 using System.Windows.Forms;
 
 namespace FileProcessing
@@ -50,93 +51,104 @@ namespace FileProcessing
         /// <param name="e">The event data.</param>
         private void btRead_Click(object sender, EventArgs e)
         {
-            using (StreamReader srReader = new StreamReader(tbFileName.Text))
+            // 1. 🧹 เคลียร์ข้อมูลเก่าของ "ทั้งคู่" ทิ้งพร้อมกันเพื่อเตรียมรับของใหม่
+            dataGridView1.DataSource = null;
+            dataGridView1.Columns.Clear();
+            rtb.Clear(); // เคลียร์ฝั่ง TXT ด้วย
+
+            // 2. 🔍 ตรวจสอบพาธไฟล์
+            if (string.IsNullOrEmpty(tbFileName.Text) || !File.Exists(tbFileName.Text))
             {
-                string strLine;
-                bool bHeaderRead = false;
-                int lineNumber = 1; 
-
-                
-                while ((strLine = srReader.ReadLine()) != null)
-                {
-                    
-
-                    
-                    if (!bHeaderRead) { bHeaderRead = true; continue; }
-
-                    
-                    if (lineNumber < 100) { lineNumber++; continue; }
-                    if (lineNumber > 200) { break; }
-
-                    
-                    string[] columns = strLine.Split(',');
-                    if (columns.Length > 6 && columns[5].Trim() == "exe") 
-                    {
-                        
-                    }
-
-                    lineNumber++; 
-                }
-            }
-        
-        string filePath = tbFileName.Text;
-
-            if (string.IsNullOrEmpty(filePath) || !System.IO.File.Exists(filePath))
-            {
-                MessageBox.Show("กรุณาเลือกไฟล์ก่อน!");
+                MessageBox.Show("กรุณาเลือกไฟล์ก่อนครับ", "แจ้งเตือน", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            // 3. 🔢 แปลงค่าบรรทัดเริ่มต้น (m) และสิ้นสุด (n) อย่างปลอดภัย
+            int m, n;
+            if (!int.TryParse(txtStartLine.Text.Trim(), out m) || !int.TryParse(txtEndLine.Text.Trim(), out n))
+            {
+                MessageBox.Show("กรุณากรอกตัวเลขบรรทัดให้ถูกต้อง (ห้ามมีช่องว่าง)", "แจ้งเตือน", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (m > n)
+            {
+                MessageBox.Show("เกิดข้อผิดพลาด: บรรทัดเริ่มต้นต้องไม่มากกว่าบรรทัดสิ้นสุด", "แจ้งเตือน", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string filterExt = txtFilter.Text.Trim();
+
+            // เตรียมตัวเก็บข้อมูลของทั้ง 2 รูปแบบ
+            DataTable dt = new DataTable();        // 🟢 สำหรับฝั่ง CSV (ตาราง)
+            StringBuilder sb = new StringBuilder(); // 🔵 สำหรับฝั่ง TXT (ตัวหนังสือดิบ)
+
             try
             {
-                
-                System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                int m = 100;              
-                int n = 200;              
-                string filterExt = "exe"; 
-
-                using (System.IO.StreamReader reader = new System.IO.StreamReader(filePath))
+                using (StreamReader sr = new StreamReader(tbFileName.Text))
                 {
                     string line;
-                    int lineNumber = 1;
+                    int currentLine = 0;
 
-                    
-                    while ((line = reader.ReadLine()) != null)
+                    while ((line = sr.ReadLine()) != null)
                     {
-                      
-                        if (lineNumber < m)
+                        // จัดการบรรทัดหัวตาราง (สำหรับ CSV)
+                        if (line.StartsWith("#"))
                         {
-                            lineNumber++;
-                            continue; 
-                        }
-                        if (lineNumber > n)
-                        {
-                            break; 
-                        }
-
-                        string[] columns = line.Split(','); 
-
-                        if (columns.Length > 2)
-                        {
-                            string currentExt = columns[2].Trim(); 
-
-                            if (currentExt == filterExt) 
+                            if (line.Contains("first_seen_utc"))
                             {
-                                sb.AppendLine(line); 
+                                string headerLine = line.Replace("#", "").Trim();
+                                string[] headerColumns = headerLine.Split(',');
+
+                                if (dt.Columns.Count == 0)
+                                {
+                                    for (int i = 0; i < headerColumns.Length; i++)
+                                    {
+                                        dt.Columns.Add(headerColumns[i].Trim().Replace("\"", ""));
+                                    }
+                                }
                             }
+                            continue; // บรรทัดหัวตารางจะไม่เอาไปนับบรรทัดข้อมูล
                         }
 
-                        lineNumber++; 
+                        currentLine++;
+
+                        // เช็คขอบเขตบรรทัด m ถึง n (แชร์เงื่อนไขร่วมกัน)
+                        if (currentLine < m || currentLine > n) continue;
+
+                        // กรองข้อมูลด้วย Filter (แชร์เงื่อนไขร่วมกัน)
+                        if (string.IsNullOrEmpty(filterExt) || line.Contains(filterExt))
+                        {
+                            // 🟢 จัดการเก็บเข้าฝั่ง CSV (แตกคอลัมน์ลงตาราง)
+                            string[] columns = line.Split(',');
+                            if (dt.Columns.Count == 0)
+                            {
+                                for (int i = 0; i < columns.Length; i++) dt.Columns.Add("Col" + (i + 1));
+                            }
+
+                            object[] row = new object[dt.Columns.Count];
+                            for (int i = 0; i < columns.Length && i < dt.Columns.Count; i++)
+                            {
+                                row[i] = columns[i];
+                            }
+                            dt.Rows.Add(row);
+
+                            // 🔵 จัดการเก็บเข้าฝั่ง TXT (ยัดลงตัวหนังสือดิบต่อท้ายไปเรื่อยๆ)
+                            sb.AppendLine(line);
+                        }
                     }
                 }
-                rtbShow.Text = sb.ToString();
 
-                MessageBox.Show("อ่านข้อมูลเสร็จเรียบร้อย!");
+                // 4. 🚀 พ่นข้อมูลออกหน้าจอพร้อมกันทั้งสองฝั่งอย่างเป็นทางการ!
+                dataGridView1.DataSource = dt;   // ตารางอัปเดต
+                rtb.Text = sb.ToString(); // กล่องข้อความอัปเดต
             }
             catch (Exception ex)
             {
-                MessageBox.Show("เกิดข้อผิดพลาดในการอ่านไฟล์: " + ex.Message);
+                MessageBox.Show("เกิดข้อผิดพลาดในการซิงค์ข้อมูล: " + ex.Message, "ข้อผิดพลาด", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
+
         /// <summary>
         /// Handles the Click event of the btReadCSV button, reading CSV data from the specified file and populating the
         /// DataGridView with its contents.
@@ -156,14 +168,14 @@ namespace FileProcessing
             int m, n;
             if (!int.TryParse(txtStartLine.Text, out m) || !int.TryParse(txtEndLine.Text, out n)) return;
 
-            // 🌟 [เพิ่มใหม่] ตรวจสอบกรณีใส่ช่วงบรรทัดสลับกัน (Invalid Range: m > n)
+            // ตรวจสอบกรณีใส่ช่วงบรรทัดสลับกัน (Invalid Range: m > n)
             if (m > n)
             {
                 MessageBox.Show("เกิดข้อผิดพลาด: Invalid Range (บรรทัดเริ่มต้นต้องไม่มากกว่าบรรทัดสิ้นสุด)",
                                 "แจ้งเตือนระบบ",
                                 MessageBoxButtons.OK,
                                 MessageBoxIcon.Warning);
-                return; // ตัดจบการทำงานทันที ระบบไม่พัง ไม่โหลดไฟล์
+                return;
             }
 
             string filterExt = txtFilter.Text.Trim();
@@ -178,10 +190,37 @@ namespace FileProcessing
 
                     while ((line = sr.ReadLine()) != null)
                     {
+                        // 🌟 [จุดแก้ไข] ตรวจสอบบรรทัดคอมเมนต์อธิบายไฟล์
+                        if (line.StartsWith("#"))
+                        {
+                            // ถ้าเป็นบรรทัดที่มีคำว่า first_seen_utc แสดงว่าเป็นบรรทัดหัวตารางจริง!
+                            if (line.Contains("first_seen_utc"))
+                            {
+                                // ถอดเครื่องหมาย # ออก แล้วตัดช่องว่าง
+                                string headerLine = line.Replace("#", "").Trim();
+                                string[] headerColumns = headerLine.Split(',');
+
+                                if (dt.Columns.Count == 0)
+                                {
+                                    for (int i = 0; i < headerColumns.Length; i++)
+                                    {
+                                        // เอาชื่อคอลัมน์จริงใส่ในตาราง (และลบเครื่องหมายคำพูดออกถ้ามี)
+                                        string colName = headerColumns[i].Trim().Replace("\"", "");
+                                        dt.Columns.Add(colName);
+                                    }
+                                }
+                            }
+                            continue; // ข้ามบรรทัดคอมเมนต์อื่นๆ ไป ไม่เอามานับเป็นแถวข้อมูล
+                        }
+
                         currentLine++;
+
+                        // ข้ามบรรทัดที่ไม่อยู่ในขอบเขต Range (m - n) ที่กำหนด
+                        if (currentLine < m || currentLine > n) continue;
+
                         string[] columns = line.Split(',');
 
-                        // 1. สร้างหัวตารางจากบรรทัดแรกเสมอ
+                        // ตัวช่วยสำรอง: กรณีที่ไฟล์ไม่มีหัวคอลัมน์จริง ให้ใช้ Col1, Col2 ไปก่อนเพื่อไม่ให้โปรแกรมพัง
                         if (dt.Columns.Count == 0)
                         {
                             for (int i = 0; i < columns.Length; i++)
@@ -190,14 +229,9 @@ namespace FileProcessing
                             }
                         }
 
-                        // 2. ข้ามบรรทัดที่ไม่อยู่ในขอบเขต Range (m - n) ที่กำหนด
-                        if (currentLine < m || currentLine > n) continue;
-
-                        // 3. กรองข้อมูล (ค้นหาคำจากทั้งบรรทัด)
-                        // ถ้าช่อง Filter ว่าง หรือพบคำค้นหาในบรรทัดนั้น ให้เพิ่มข้อมูลเข้าตาราง
+                        // กรองข้อมูล (ค้นหาคำจากทั้งบรรทัด)
                         if (string.IsNullOrEmpty(filterExt) || line.Contains(filterExt))
                         {
-                            // สร้างแถวให้พอดีกับจำนวนคอลัมน์ของหัวตาราง
                             object[] row = new object[dt.Columns.Count];
                             for (int i = 0; i < columns.Length && i < dt.Columns.Count; i++)
                             {
@@ -208,7 +242,7 @@ namespace FileProcessing
                     }
                 }
 
-                // ผูกข้อมูล DataTable เข้ากับ DataGridView เพื่อแสดงผลบนหน้าจอ
+                // ผูกข้อมูล DataTable เข้ากับ DataGridView เพื่อแสดงผล
                 dataGridView1.DataSource = dt;
             }
             catch (Exception ex)
